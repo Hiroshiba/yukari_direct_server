@@ -1,0 +1,4 @@
+numpy
+tornado
+tornado-cors
+git+https://github.com/Hiroshiba/yukarin
