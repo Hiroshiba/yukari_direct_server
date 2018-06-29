@@ -1,38 +1,32 @@
 import argparse
-import os
-import tempfile
-from io import BytesIO
 from pathlib import Path
 
-import librosa
-import numpy
 import tornado
 import tornado.ioloop
 import tornado.web
-from tornado_cors import CorsMixin
+import tornado.websocket
 
-from yukari_direct_server.yukarin_wrapper import YukarinWrapper
+from yukari_direct_server.realtime_wrapper import RealtimeWrapper
 
 
-class YukarinHandler(CorsMixin, tornado.web.RequestHandler):
-    CORS_ORIGIN = '*'
-    CORS_HEADERS = 'Content-Type'
-    CORS_METHODS = 'POST, OPTIONS'
+class YukarinHandler(tornado.websocket.WebSocketHandler):
+    def initialize(self, realtime_wrapper: RealtimeWrapper):
+        self.realtime_wrapper = realtime_wrapper
 
-    def initialize(self, yukarin_wrapper: YukarinWrapper):
-        self.yukarin_wrapper = yukarin_wrapper
+    def check_origin(self, origin):
+        return True
 
-    def post(self):
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            f.write(self.request.files['data'][0]['body'])
+    def open(self):
+        pass
 
-        wave_wrapper = self.yukarin_wrapper.convert(Path(f.name))
-        sio = BytesIO()
-        librosa.output.write_wav(sio, wave_wrapper.wave.astype(numpy.float32), sr=wave_wrapper.sampling_rate)
-        os.remove(f.name)
+    def on_message(self, binary: bytes):
+        self.realtime_wrapper.addWaveBinary(binary=binary, dtype='float32')
 
-        self.set_header('Content-type', 'audio/wave')
-        self.write(sio.getvalue())
+        try:
+            binary = self.realtime_wrapper.queue_output_binary.get_nowait()
+            self.write_message(binary, binary=True)
+        except:
+            pass
 
 
 def main():
@@ -46,7 +40,7 @@ def main():
     parser.add_argument('--gpu', type=int)
     arguments = parser.parse_args()
 
-    yukarin_wrapper = YukarinWrapper(
+    realtime_wrapper = RealtimeWrapper(
         voice_changer_model=arguments.voice_changer_model,
         voice_changer_config=arguments.voice_changer_config,
         super_resolution_model=arguments.super_resolution_model,
@@ -59,7 +53,7 @@ def main():
     app = tornado.web.Application(
         [
             (r"/yukari", YukarinHandler, dict(
-                yukarin_wrapper=yukarin_wrapper,
+                realtime_wrapper=realtime_wrapper,
             )),
         ],
         debug=True,
